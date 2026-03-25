@@ -1,0 +1,6 @@
+[submodule "third_party/obvi_slam"]
+	path = third_party/obvi_slam
+	url = https://github.com/Robolightning/ObVi-SLAM
+[submodule "third_party/orb_slam3"]
+	path = third_party/orb_slam3
+	url = https://github.com/Robolightning/ORB_SLAM3
