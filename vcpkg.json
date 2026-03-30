@@ -1,0 +1,30 @@
+{
+  "name": "orbvi-slam",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "opencv4",
+      "features": ["highgui", "calib3d"],
+      "default-features": false
+    },
+    "ceres",
+    "boost-filesystem",
+    "boost-serialization",
+    "glog",
+    "gflags",
+    "yaml-cpp",
+    "suitesparse-spqr",
+    "eigen3",
+    "gtest",
+    {
+      "name": "pangolin",
+      "default-features": false
+    },
+    "sophus",
+    "g2o",
+    "dbow2",
+    "openssl",
+    "nanobind"
+  ],
+  "builtin-baseline": "197fa8bf282e537136e4cf196af167e7f79be07b"
+}
