@@ -4,6 +4,48 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
 endif()
 
+if(POLICY CMP0082)
+    cmake_policy(SET CMP0082 NEW)
+endif()
+
+# ------------------------------------------------------------------------------
+# vcpkg auto-detection
+# Must happen before project()
+# ------------------------------------------------------------------------------
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    set(_orbvi_vcpkg_candidates "")
+
+    if(DEFINED ENV{CMAKE_TOOLCHAIN_FILE} AND EXISTS "$ENV{CMAKE_TOOLCHAIN_FILE}")
+        list(APPEND _orbvi_vcpkg_candidates "$ENV{CMAKE_TOOLCHAIN_FILE}")
+    endif()
+
+    if(DEFINED ENV{VCPKG_ROOT})
+        list(APPEND _orbvi_vcpkg_candidates
+            "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+    endif()
+
+    if(DEFINED ENV{HOME})
+        list(APPEND _orbvi_vcpkg_candidates
+            "$ENV{HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    endif()
+
+    if(UNIX AND NOT APPLE)
+        list(APPEND _orbvi_vcpkg_candidates
+            "/mnt/c/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    endif()
+
+    foreach(_orbvi_toolchain IN LISTS _orbvi_vcpkg_candidates)
+        if(EXISTS "${_orbvi_toolchain}")
+            set(CMAKE_TOOLCHAIN_FILE "${_orbvi_toolchain}" CACHE FILEPATH "vcpkg toolchain file")
+            message(STATUS "Using vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+            break()
+        endif()
+    endforeach()
+
+    unset(_orbvi_toolchain)
+    unset(_orbvi_vcpkg_candidates)
+endif()
+
 project(orbvi_slam VERSION 0.1.0 LANGUAGES C CXX)
 
 # ------------------------------------------------------------------------------
@@ -47,6 +89,29 @@ else()
     find_library(CHOLMOD_LIB NAMES cholmod REQUIRED)
     set(ORBVI_SUITESPARSE_LIBS ${CHOLMOD_LIB})
 endif()
+
+# ------------------------------------------------------------------------------
+# Helper: install internal shared libraries next to the Python modules
+# ------------------------------------------------------------------------------
+# This is important on Linux when ORB_SLAM3 / ut_vslam are built as shared libs:
+# the extension modules can then find them via $ORIGIN at import time.
+function(orbvi_install_if_shared target_name)
+    if(TARGET ${target_name})
+        get_target_property(_type ${target_name} TYPE)
+        if(_type STREQUAL "SHARED_LIBRARY" OR _type STREQUAL "MODULE_LIBRARY")
+            if(UNIX AND NOT APPLE)
+                set_target_properties(${target_name} PROPERTIES
+                    INSTALL_RPATH "$ORIGIN"
+                )
+            endif()
+
+            install(TARGETS ${target_name}
+                LIBRARY DESTINATION "${PACKAGE_NAME}"
+                RUNTIME DESTINATION "${PACKAGE_NAME}"
+            )
+        endif()
+    endif()
+endfunction()
 
 # ------------------------------------------------------------------------------
 # ORB-SLAM3 nanobind module
@@ -127,16 +192,16 @@ install(TARGETS _orb_slam3 _obvi_slam
     RUNTIME DESTINATION "${PACKAGE_NAME}"
 )
 
+# Install internal shared libraries next to the modules when applicable.
+orbvi_install_if_shared(ORB_SLAM3)
+orbvi_install_if_shared(ut_vslam)
+
 # ------------------------------------------------------------------------------
 # Install-time runtime dependency bundling
 # ------------------------------------------------------------------------------
-# We do this manually instead of install(TARGETS ... RUNTIME_DEPENDENCIES ...)
-# because on Windows CMake may encounter unresolved system DLLs like
-# HvsiFileTrust.dll and fail the whole wheel build.
-#
-# This code runs during "cmake --install", i.e. before INSTALL_TIME stubgen.
-# That ensures the modules are importable when nanobind generates .pyi files.
-
+# Windows: copy resolved DLL dependencies next to the installed .pyd files.
+# We avoid install(TARGETS ... RUNTIME_DEPENDENCIES ...) because unresolved
+# system DLLs can fail the wheel build.
 if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     install(CODE "
         set(_pkgdir \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${PACKAGE_NAME}\")
@@ -162,6 +227,7 @@ if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
                 \"^ext-ms-.*\"
                 \"^hvsifiletrust\\.dll$\"
                 \"^pdmutilities\\.dll$\"
+                \"^python3[0-9]+(_d)?\\.dll$\"
             POST_EXCLUDE_REGEXES
                 \".*system32/.*\\\\.dll$\"
                 \".*windows/.*\\\\.dll$\"
@@ -173,7 +239,8 @@ if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
             if(NOT _dep_lc MATCHES \"^api-ms-.*\"
                AND NOT _dep_lc MATCHES \"^ext-ms-.*\"
                AND NOT _dep_lc MATCHES \"^hvsifiletrust\\.dll$\"
-               AND NOT _dep_lc MATCHES \"^pdmutilities\\.dll$\")
+               AND NOT _dep_lc MATCHES \"^pdmutilities\\.dll$\"
+               AND NOT _dep_lc MATCHES \"^python3[0-9]+(_d)?\\.dll$\")
                 list(APPEND _unexpected_unresolved \"\${_dep}\")
             endif()
         endforeach()
@@ -193,6 +260,7 @@ if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         endif()
     ")
 elseif(UNIX AND NOT APPLE AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    # Linux + vcpkg: optionally copy non-system runtime deps when available.
     install(CODE "
         set(_pkgdir \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${PACKAGE_NAME}\")
 
@@ -237,6 +305,10 @@ endif()
 # ------------------------------------------------------------------------------
 # Generate stubs via a Python wrapper executed in-process
 # ------------------------------------------------------------------------------
+# Why not nanobind_add_stub() directly?
+# On Windows / Python 3.8+, importing a .pyd may require os.add_dll_directory()
+# for dependent native libraries. Also, a temporary __init__.py in the staged
+# package prevents the source tree package from winning via namespace merging.
 
 set(STUBGEN_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/run_nanobind_stubgen.py")
 
@@ -310,6 +382,17 @@ if __name__ == "__main__":
 # ------------------------------------------------------------------------------
 # Generate a separate install script to avoid fragile quoting in install(CODE)
 # ------------------------------------------------------------------------------
+file(TO_CMAKE_PATH "${Python_EXECUTABLE}" PYTHON_EXECUTABLE_CMAKE)
+file(TO_CMAKE_PATH "${STUBGEN_WRAPPER}" STUBGEN_WRAPPER_CMAKE)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" SOURCE_ROOT_CMAKE)
+
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    file(TO_CMAKE_PATH "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" VCPKG_BIN_CMAKE)
+    file(TO_CMAKE_PATH "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin" VCPKG_DEBUG_BIN_CMAKE)
+else()
+    set(VCPKG_BIN_CMAKE "")
+    set(VCPKG_DEBUG_BIN_CMAKE "")
+endif()
 
 set(STUBGEN_INSTALL_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/run_stubgen_install.cmake")
 
@@ -318,13 +401,13 @@ set(_install_prefix "$ENV{DESTDIR}@CMAKE_INSTALL_PREFIX@")
 
 execute_process(
     COMMAND
-        "@Python_EXECUTABLE@"
-        "@STUBGEN_WRAPPER@"
+        "@PYTHON_EXECUTABLE_CMAKE@"
+        "@STUBGEN_WRAPPER_CMAKE@"
         "${_install_prefix}"
         "@PACKAGE_NAME@"
-        "@CMAKE_CURRENT_SOURCE_DIR@"
-        "@VCPKG_INSTALLED_DIR@/@VCPKG_TARGET_TRIPLET@/bin"
-        "@VCPKG_INSTALLED_DIR@/@VCPKG_TARGET_TRIPLET@/debug/bin"
+        "@SOURCE_ROOT_CMAKE@"
+        "@VCPKG_BIN_CMAKE@"
+        "@VCPKG_DEBUG_BIN_CMAKE@"
     RESULT_VARIABLE _stubgen_result
 )
 
@@ -340,13 +423,6 @@ install(SCRIPT "${STUBGEN_INSTALL_SCRIPT}")
 
 # ------------------------------------------------------------------------------
 # Install the real __init__.py last, after stub generation
-# ------------------------------------------------------------------------------
-install(FILES
-    "${SRC_ROOT}/__init__.py"
-    DESTINATION "${PACKAGE_NAME}"
-)
-# ------------------------------------------------------------------------------
-# Install __init__.py last, after stub generation
 # ------------------------------------------------------------------------------
 install(FILES
     "${SRC_ROOT}/__init__.py"

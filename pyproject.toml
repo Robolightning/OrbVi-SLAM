@@ -1,7 +1,7 @@
 [build-system]
 requires = [
     "scikit-build-core>=0.10.0",
-    "nanobind>=1.3.2"
+    "nanobind>=1.3.2",
 ]
 build-backend = "scikit_build_core.build"
 
@@ -9,8 +9,8 @@ build-backend = "scikit_build_core.build"
 name = "orbvi_slam"
 version = "0.1.0"
 description = "ROS-free integration of ORB-SLAM3 and ObVi-SLAM"
-authors = [{name = "Robolightning", email = "irobolightning@gmail.com"}]
-license = "MIT"
+authors = [{ name = "Robolightning", email = "irobolightning@gmail.com" }]
+license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
@@ -24,17 +24,17 @@ Homepage = "https://github.com/Robolightning/OrbVi-SLAM"
 Repository = "https://github.com/Robolightning/OrbVi-SLAM"
 
 [tool.scikit-build]
-minimum-version = "0.10"
+minimum-version = "build-system.requires"
 cmake.source-dir = "."
 search.site-packages = true
 
 [[tool.scikit-build.overrides]]
-if.platform-system = "^win32"
+if.platform-system = "^win32$"
 cmake.toolchain-file = "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 cmake.args = ["-A", "x64"]
 cmake.define.VCPKG_TARGET_TRIPLET = "x64-windows"
 
 [[tool.scikit-build.overrides]]
-if.platform-system = "^linux"
-cmake.toolchain-file = "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake"
+if.platform-system = "^linux$"
 cmake.define.VCPKG_TARGET_TRIPLET = "x64-linux"
+cmake.define.VCPKG_HOST_TRIPLET = "x64-linux"

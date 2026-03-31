@@ -23,8 +23,7 @@
     "sophus",
     "g2o",
     "dbow2",
-    "openssl",
-    "nanobind"
+    "openssl"
   ],
   "builtin-baseline": "197fa8bf282e537136e4cf196af167e7f79be07b"
 }
